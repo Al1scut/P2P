@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P2Pメッセージ</title>
+<style>
+:root{--bg:#e8edf2;--card:#fff;--ink:#14213d;--sub:#5b6b82;--line:#cfd8e3;--acc:#2f4bff;--ok:#12805c;--bad:#c62f3b}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1622;--card:#182233;--ink:#e6ecf5;--sub:#8fa0b8;--line:#2a3850;--acc:#7b8dff}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.6 "Hiragino Sans","Yu Gothic UI","Noto Sans JP",sans-serif;display:flex;justify-content:center}
+main{width:100%;max-width:720px;height:100%;display:flex;flex-direction:column;padding:12px}
+header{display:flex;align-items:center;justify-content:space-between;padding:4px 4px 10px}
+h1{font-size:18px;margin:0}
+#st{font-size:13px;color:var(--sub);display:flex;align-items:center;gap:6px}
+#st i{width:9px;height:9px;border-radius:50%;background:var(--sub)}
+#st.ok i{background:var(--ok)}#st.bad i{background:var(--bad)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:8px 14px}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff}
+button.on{border-color:var(--acc);color:var(--acc);font-weight:700}
+button:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+textarea{width:100%;height:84px;font:12px/1.4 ui-monospace,Menlo,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px;resize:vertical;word-break:break-all}
+.step{margin:0 0 14px}.step p{margin:0 0 6px;font-weight:700}
+.row{display:flex;gap:8px;margin-top:6px}
+small{color:var(--sub)}
+#chat{flex:1;min-height:0;display:none;flex-direction:column;gap:8px}
+#log{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:8px 2px}
+.m{max-width:82%;padding:8px 12px;border-radius:12px;background:var(--card);border:1px solid var(--line);align-self:flex-start;word-break:break-word;white-space:pre-wrap}
+.m.me{align-self:flex-end;background:var(--acc);border-color:var(--acc);color:#fff}
+.m img,.m video{max-width:100%;max-height:320px;border-radius:8px;display:block;margin:4px 0}
+.m a{color:inherit;text-decoration:underline}
+.m .meta{font-size:12px;opacity:.8;white-space:normal}
+progress{width:100%;height:6px;margin-top:4px}
+#bar{display:flex;gap:8px;align-items:flex-end}
+#bar textarea{height:44px;flex:1;font:15px/1.4 inherit;font-family:inherit}
+#drop{position:fixed;inset:0;background:#2f4bffcc;color:#fff;display:none;align-items:center;justify-content:center;font-size:22px;z-index:9}
+</style>
+</head>
+<body>
+<main>
+<header><h1>P2Pメッセージ</h1><div id="st"><i></i><span>未接続</span></div></header>
+
+<section id="setup" class="card">
+  <div class="tabs">
+    <button id="tH" class="on">接続を作る</button>
+    <button id="tG">接続コードを受け取った</button>
+  </div>
+
+  <div id="host">
+    <div class="step"><p>1. 接続コードを作って相手に送る</p>
+      <button class="p" id="mkOffer">接続コードを作る</button>
+      <textarea id="offer" readonly placeholder="ここにコードが表示されます"></textarea>
+      <div class="row"><button data-copy="offer">コピー</button></div></div>
+    <div class="step"><p>2. 相手から届いた返信コードを貼る</p>
+      <textarea id="ans" placeholder="返信コードを貼り付け"></textarea>
+      <div class="row"><button class="p" id="accept">接続する</button></div></div>
+  </div>
+
+  <div id="guest" hidden>
+    <div class="step"><p>1. 受け取った接続コードを貼る</p>
+      <textarea id="off2" placeholder="接続コードを貼り付け"></textarea>
+      <div class="row"><button class="p" id="mkAns">返信コードを作る</button></div></div>
+    <div class="step"><p>2. 返信コードを相手に送る</p>
+      <textarea id="ans2" readonly placeholder="ここにコードが表示されます"></textarea>
+      <div class="row"><button data-copy="ans2">コピー</button></div>
+      <small>相手が「接続する」を押すと自動でつながります。</small></div>
+  </div>
+  <small id="err" style="color:var(--bad)"></small>
+  <p><small>コードのやりとりだけ別の手段(メール・チャットなど)が必要です。つながった後の通信はサーバーを通らず、端末同士で直接行われます。</small></p>
+</section>
+
+<section id="chat">
+  <div id="log"></div>
+  <div id="bar">
+    <input type="file" id="file" multiple hidden>
+    <button id="pick" title="ファイルを選ぶ">添付</button>
+    <textarea id="txt" placeholder="メッセージを入力(Enterで送信、Shift+Enterで改行)"></textarea>
+    <button class="p" id="send">送信</button>
+  </div>
+</section>
+</main>
+<div id="drop">ここにドロップして送信</div>
+
+<script>
+const $=s=>document.querySelector(s), CH=16384;
+const cfg={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun.cloudflare.com:3478'}]};
+let pc,dc,rx=null,q=Promise.resolve();
+
+const enc=d=>btoa(JSON.stringify(d)), dec=s=>JSON.parse(atob(s.replace(/\s/g,'')));
+const err=t=>$('#err').textContent=t||'';
+function status(t,c){const s=$('#st');s.className=c||'';s.querySelector('span').textContent=t}
+const size=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':n<1073741824?(n/1048576).toFixed(1)+' MB':(n/1073741824).toFixed(2)+' GB';
+
+function mk(){
+  pc=new RTCPeerConnection(cfg);
+  pc.onconnectionstatechange=()=>{
+    const s=pc.connectionState;
+    if(s==='connected')status('接続中','ok');
+    else if(s==='failed'||s==='disconnected'||s==='closed')status('切断されました','bad');
+    else status('接続しています…');
+  };
+}
+function gathered(){
+  return new Promise(r=>{
+    if(pc.iceGatheringState==='complete')return r();
+    const t=setTimeout(r,5000);
+    pc.onicegatheringstatechange=()=>{if(pc.iceGatheringState==='complete'){clearTimeout(t);r()}};
+  });
+}
+function setup(ch){
+  dc=ch;dc.binaryType='arraybuffer';dc.bufferedAmountLowThreshold=1<<20;
+  dc.onopen=()=>{$('#setup').style.display='none';$('#chat').style.display='flex';status('接続中','ok');log('system','つながりました')};
+  dc.onclose=()=>{status('切断されました','bad');log('system','切断されました')};
+  dc.onmessage=e=>onData(e.data);
+}
+
+/* --- 接続 --- */
+$('#tH').onclick=()=>{$('#host').hidden=false;$('#guest').hidden=true;$('#tH').className='on';$('#tG').className=''};
+$('#tG').onclick=()=>{$('#host').hidden=true;$('#guest').hidden=false;$('#tG').className='on';$('#tH').className=''};
+document.querySelectorAll('[data-copy]').forEach(b=>b.onclick=async()=>{
+  const t=$('#'+b.dataset.copy);t.select();
+  try{await navigator.clipboard.writeText(t.value)}catch{document.execCommand('copy')}
+  b.textContent='コピーしました';setTimeout(()=>b.textContent='コピー',1500);
+});
+$('#mkOffer').onclick=async()=>{
+  try{err();status('コードを作成中…');mk();setup(pc.createDataChannel('c'));
+    await pc.setLocalDescription(await pc.createOffer());await gathered();
+    $('#offer').value=enc(pc.localDescription);status('返信コードを待っています');
+  }catch(e){err('コードを作れませんでした: '+e.message)}
+};
+$('#accept').onclick=async()=>{
+  try{err();await pc.setRemoteDescription(dec($('#ans').value));status('接続しています…')}
+  catch(e){err('返信コードが正しくありません。先に接続コードを作ってください。')}
+};
+$('#mkAns').onclick=async()=>{
+  try{err();status('返信コードを作成中…');mk();pc.ondatachannel=e=>setup(e.channel);
+    await pc.setRemoteDescription(dec($('#off2').value));
+    await pc.setLocalDescription(await pc.createAnswer());await gathered();
+    $('#ans2').value=enc(pc.localDescription);status('相手の接続を待っています');
+  }catch(e){err('接続コードが正しくありません: '+e.message)}
+};
+
+/* --- 表示 --- */
+function log(who,text){
+  const d=document.createElement('div');
+  if(who==='system'){d.style.cssText='align-self:center;font-size:12px;color:var(--sub)'}
+  else d.className='m'+(who==='me'?' me':'');
+  d.textContent=text;$('#log').append(d);scroll();return d;
+}
+function scroll(){const l=$('#log');l.scrollTop=l.scrollHeight}
+function fileBox(who,name,sz){
+  const d=log(who,'');d.innerHTML='<div class="meta"></div><div class="body"></div><progress value="0" max="1"></progress>';
+  d.querySelector('.meta').textContent='📎 '+name+'('+size(sz)+')';return d;
+}
+function finish(d,blob,name,mime){
+  d.querySelector('progress').remove();
+  const u=URL.createObjectURL(blob),b=d.querySelector('.body');let m;
+  if(mime.startsWith('image/')){m=new Image();m.src=u;m.onload=scroll}
+  else if(mime.startsWith('video/')){m=document.createElement('video');m.src=u;m.controls=true;m.onloadedmetadata=scroll}
+  else if(mime.startsWith('audio/')){m=document.createElement('audio');m.src=u;m.controls=true}
+  if(m)b.append(m);
+  const a=document.createElement('a');a.href=u;a.download=name;a.textContent='保存';b.append(a);scroll();
+}
+
+/* --- 受信 --- */
+function onData(d){
+  if(typeof d!=='string'){
+    if(!rx)return;rx.parts.push(d);rx.got+=d.byteLength;rx.ui.querySelector('progress').value=rx.got/(rx.size||1);return;
+  }
+  const m=JSON.parse(d);
+  if(m.t==='msg')log('peer',m.text);
+  else if(m.t==='file')rx={...m,parts:[],got:0,ui:fileBox('peer',m.name,m.size)};
+  else if(m.t==='end'&&rx){finish(rx.ui,new Blob(rx.parts,{type:rx.mime}),rx.name,rx.mime);rx=null}
+}
+
+/* --- 送信 --- */
+function sendText(){
+  const t=$('#txt').value.trim();if(!t||!dc||dc.readyState!=='open')return;
+  dc.send(JSON.stringify({t:'msg',text:t}));log('me',t);$('#txt').value='';
+}
+function sendFile(f){
+  q=q.then(async()=>{
+    if(dc.readyState!=='open')return;
+    const mime=f.type||'application/octet-stream',ui=fileBox('me',f.name,f.size),p=ui.querySelector('progress');
+    dc.send(JSON.stringify({t:'file',name:f.name,size:f.size,mime}));
+    for(let o=0;o<f.size;o+=CH){
+      if(dc.bufferedAmount>4<<20)await new Promise(r=>dc.addEventListener('bufferedamountlow',r,{once:true}));
+      dc.send(await f.slice(o,o+CH).arrayBuffer());p.value=o/f.size;
+    }
+    dc.send(JSON.stringify({t:'end'}));finish(ui,f,f.name,mime);
+  }).catch(e=>log('system','送信に失敗しました: '+e.message));
+}
+$('#send').onclick=sendText;
+$('#txt').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendText()}};
+$('#pick').onclick=()=>$('#file').click();
+$('#file').onchange=e=>{[...e.target.files].forEach(sendFile);e.target.value=''};
+
+/* ドラッグ&ドロップ・貼り付け */
+let dn=0;
+addEventListener('dragenter',e=>{e.preventDefault();if($('#chat').style.display==='flex'){dn++;$('#drop').style.display='flex'}});
+addEventListener('dragleave',()=>{if(--dn<=0){dn=0;$('#drop').style.display='none'}});
+addEventListener('dragover',e=>e.preventDefault());
+addEventListener('drop',e=>{e.preventDefault();dn=0;$('#drop').style.display='none';if(dc&&dc.readyState==='open')[...e.dataTransfer.files].forEach(sendFile)});
+addEventListener('paste',e=>{if(dc&&dc.readyState==='open')[...(e.clipboardData.files||[])].forEach(sendFile)});
+</script>
+</body>
+</html>
