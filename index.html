@@ -44,32 +44,14 @@ progress{width:100%;height:6px;margin-top:4px}
 <header><h1>P2Pメッセージ</h1><div id="st"><i></i><span>未接続</span></div></header>
 
 <section id="setup" class="card">
-  <div class="tabs">
-    <button id="tH" class="on">接続を作る</button>
-    <button id="tG">接続コードを受け取った</button>
-  </div>
-
-  <div id="host">
-    <div class="step"><p>1. 接続コードを作って相手に送る</p>
-      <button class="p" id="mkOffer">接続コードを作る</button>
-      <textarea id="offer" readonly placeholder="ここにコードが表示されます"></textarea>
-      <div class="row"><button data-copy="offer">コピー</button></div></div>
-    <div class="step"><p>2. 相手から届いた返信コードを貼る</p>
-      <textarea id="ans" placeholder="返信コードを貼り付け"></textarea>
-      <div class="row"><button class="p" id="accept">接続する</button></div></div>
-  </div>
-
-  <div id="guest" hidden>
-    <div class="step"><p>1. 受け取った接続コードを貼る</p>
-      <textarea id="off2" placeholder="接続コードを貼り付け"></textarea>
-      <div class="row"><button class="p" id="mkAns">返信コードを作る</button></div></div>
-    <div class="step"><p>2. 返信コードを相手に送る</p>
-      <textarea id="ans2" readonly placeholder="ここにコードが表示されます"></textarea>
-      <div class="row"><button data-copy="ans2">コピー</button></div>
-      <small>相手が「接続する」を押すと自動でつながります。</small></div>
-  </div>
+  <div class="step"><p>あなたのID</p>
+    <div id="myid" style="font-size:44px;font-weight:700;letter-spacing:.15em;line-height:1.1">---</div>
+    <small>このIDを相手に伝えてください。相手が入力するとつながります。</small></div>
+  <div class="step"><p>相手のIDを入力して接続</p>
+    <div class="row"><input id="pid" inputmode="numeric" maxlength="3" placeholder="000" style="width:110px;font:700 24px/1.2 inherit;letter-spacing:.15em;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)">
+    <button class="p" id="go">接続する</button></div></div>
   <small id="err" style="color:var(--bad)"></small>
-  <p><small>コードのやりとりだけ別の手段(メール・チャットなど)が必要です。つながった後の通信はサーバーを通らず、端末同士で直接行われます。</small></p>
+  <p><small>IDが3桁のため、他の利用者と重なることがあります。つながる相手が違う場合は、いったん閉じて開き直してください。通信内容は端末同士で直接やりとりされます。</small></p>
 </section>
 
 <section id="chat">
@@ -84,64 +66,57 @@ progress{width:100%;height:6px;margin-top:4px}
 </main>
 <div id="drop">ここにドロップして送信</div>
 
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 const $=s=>document.querySelector(s), CH=16384;
-const cfg={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun.cloudflare.com:3478'}]};
-let pc,dc,rx=null,q=Promise.resolve();
-
-const enc=d=>btoa(JSON.stringify(d)), dec=s=>JSON.parse(atob(s.replace(/\s/g,'')));
+const PRE='p2pmsg-',ice={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun.cloudflare.com:3478'}]};
+let peer,conn,dc,rx=null,q=Promise.resolve(),tries=0;
 const err=t=>$('#err').textContent=t||'';
 function status(t,c){const s=$('#st');s.className=c||'';s.querySelector('span').textContent=t}
 const size=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':n<1073741824?(n/1048576).toFixed(1)+' MB':(n/1073741824).toFixed(2)+' GB';
 
-function mk(){
-  pc=new RTCPeerConnection(cfg);
-  pc.onconnectionstatechange=()=>{
-    const s=pc.connectionState;
-    if(s==='connected')status('接続中','ok');
-    else if(s==='failed'||s==='disconnected'||s==='closed')status('切断されました','bad');
-    else status('接続しています…');
-  };
-}
-function gathered(){
-  return new Promise(r=>{
-    if(pc.iceGatheringState==='complete')return r();
-    const t=setTimeout(r,5000);
-    pc.onicegatheringstatechange=()=>{if(pc.iceGatheringState==='complete'){clearTimeout(t);r()}};
+function boot(){
+  if(peer)peer.destroy();
+  const id=String(Math.floor(Math.random()*1000)).padStart(3,'0');
+  status('IDを取得中…');$('#myid').textContent='---';
+  peer=new Peer(PRE+id,{config:ice});
+  peer.on('open',()=>{$('#myid').textContent=id;status('接続待ち')});
+  peer.on('connection',c=>{
+    if(conn&&conn.open){c.on('open',()=>c.close());return}
+    attach(c);
+  });
+  peer.on('error',e=>{
+    if(e.type==='unavailable-id'&&tries++<30)return boot();
+    if(e.type==='peer-unavailable'){err('そのIDの相手が見つかりません。');status('接続待ち');return}
+    err('エラー: '+e.type);status('エラー','bad');
   });
 }
-function setup(ch){
-  dc=ch;dc.binaryType='arraybuffer';dc.bufferedAmountLowThreshold=1<<20;
-  dc.onopen=()=>{$('#setup').style.display='none';$('#chat').style.display='flex';status('接続中','ok');log('system','つながりました')};
-  dc.onclose=()=>{status('切断されました','bad');log('system','切断されました')};
-  dc.onmessage=e=>onData(e.data);
+function attach(c){
+  conn=c;
+  dc={send:d=>conn.send(d),
+      get readyState(){return conn.open?'open':'closed'},
+      get bufferedAmount(){return conn.dataChannel?conn.dataChannel.bufferedAmount:0},
+      addEventListener:(e,f,o)=>conn.dataChannel.addEventListener(e,f,o)};
+  const go=()=>{
+    conn.dataChannel.bufferedAmountLowThreshold=1<<20;
+    $('#setup').style.display='none';$('#chat').style.display='flex';
+    status('接続中(ID '+conn.peer.slice(PRE.length)+')','ok');log('system','つながりました');
+  };
+  conn.on('open',go);
+  conn.on('data',onData);
+  conn.on('close',()=>{status('切断されました','bad');log('system','切断されました')});
+  conn.on('error',e=>err('通信エラー: '+e.type));
 }
-
-/* --- 接続 --- */
-$('#tH').onclick=()=>{$('#host').hidden=false;$('#guest').hidden=true;$('#tH').className='on';$('#tG').className=''};
-$('#tG').onclick=()=>{$('#host').hidden=true;$('#guest').hidden=false;$('#tG').className='on';$('#tH').className=''};
-document.querySelectorAll('[data-copy]').forEach(b=>b.onclick=async()=>{
-  const t=$('#'+b.dataset.copy);t.select();
-  try{await navigator.clipboard.writeText(t.value)}catch{document.execCommand('copy')}
-  b.textContent='コピーしました';setTimeout(()=>b.textContent='コピー',1500);
-});
-$('#mkOffer').onclick=async()=>{
-  try{err();status('コードを作成中…');mk();setup(pc.createDataChannel('c'));
-    await pc.setLocalDescription(await pc.createOffer());await gathered();
-    $('#offer').value=enc(pc.localDescription);status('返信コードを待っています');
-  }catch(e){err('コードを作れませんでした: '+e.message)}
+$('#go').onclick=()=>{
+  const id=$('#pid').value.trim();err();
+  if(!/^\d{3}$/.test(id))return err('3桁の数字を入力してください。');
+  if(!peer||!peer.open)return err('ID取得中です。少し待ってください。');
+  if(PRE+id===peer.id)return err('自分のIDは指定できません。');
+  status('接続しています…');
+  attach(peer.connect(PRE+id,{serialization:'raw',reliable:true}));
 };
-$('#accept').onclick=async()=>{
-  try{err();await pc.setRemoteDescription(dec($('#ans').value));status('接続しています…')}
-  catch(e){err('返信コードが正しくありません。先に接続コードを作ってください。')}
-};
-$('#mkAns').onclick=async()=>{
-  try{err();status('返信コードを作成中…');mk();pc.ondatachannel=e=>setup(e.channel);
-    await pc.setRemoteDescription(dec($('#off2').value));
-    await pc.setLocalDescription(await pc.createAnswer());await gathered();
-    $('#ans2').value=enc(pc.localDescription);status('相手の接続を待っています');
-  }catch(e){err('接続コードが正しくありません: '+e.message)}
-};
+$('#pid').onkeydown=e=>{if(e.key==='Enter')$('#go').click()};
+boot();
 
 /* --- 表示 --- */
 function log(who,text){
